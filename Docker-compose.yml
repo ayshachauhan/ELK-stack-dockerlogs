@@ -1,0 +1,60 @@
+services:
+
+  server-app:
+    build: .
+    container_name: server
+    ports:
+      - "3000:3000"
+    networks:
+      - logging
+    restart: always
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    networks:
+      - logging
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200 || exit 1"]
+      interval: 10s
+      retries: 5
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - logging
+    restart: always
+
+  vector:   
+    image: timberio/vector:latest-alpine
+    container_name: vector
+    command: ["--config", "/etc/vector/vector.yaml"]
+    user: "0:0"
+    restart: unless-stopped
+    volumes:
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - VECTOR_LOG=debug
+    networks:
+      - logging
+
+networks:
+  logging:
+    driver: bridge

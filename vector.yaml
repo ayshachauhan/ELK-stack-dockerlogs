@@ -1,0 +1,34 @@
+data_dir: /var/lib/vector
+
+sources:
+  docker_logs:
+    type: docker_logs
+    docker_host: "unix:///var/run/docker.sock"   
+
+transforms:
+  parse_logs:
+    type: remap
+    inputs: ["docker_logs"]
+    source: |
+      # Handle null safely (WITHOUT ??)
+      if exists(.log) && .log != null {
+        .message = .log
+      } else if exists(.message) && .message != null {
+        .message = .message
+      } else {
+        .message = "no message"
+      }
+
+      # Remove problematic fields (IMPORTANT)
+      del(.label)
+      del(.labels)
+
+sinks:
+  elasticsearch:
+    type: elasticsearch
+    inputs: ["parse_logs"]
+    endpoints:
+      - "http://elasticsearch:9200"
+    mode: bulk
+    bulk:
+      index: "docker-logs-%Y-%m-%d"
