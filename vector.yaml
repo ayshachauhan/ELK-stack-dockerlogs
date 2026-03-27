@@ -3,25 +3,63 @@ data_dir: /var/lib/vector
 sources:
   docker_logs:
     type: docker_logs
-    docker_host: "unix:///var/run/docker.sock"   
+    docker_host: "unix:///var/run/docker.sock"
 
 transforms:
   parse_logs:
     type: remap
     inputs: ["docker_logs"]
     source: |
-      # Handle null safely (WITHOUT ??)
-      if exists(.log) && .log != null {
-        .message = .log
-      } else if exists(.message) && .message != null {
-        .message = .message
+      # 1. Capture the raw log string immediately
+      # Docker source puts data in .message or .log
+      raw_log = .message || .log || ""
+
+      # 2. Attempt to parse JSON
+      parsed, err = parse_json(raw_log)
+
+      if err == null && is_object(parsed) {
+        # Successfully parsed JSON, merge it into the root
+        . = merge!(., object!(parsed))
       } else {
-        .message = "no message"
+        # Not JSON, preserve the raw string in .message
+        .message = raw_log
       }
 
-      # Remove problematic fields (IMPORTANT)
-      del(.label)
-      del(.labels)
+      if exists(.service) {
+        .app_name = string!(.service)
+        del(.service)
+      }
+
+      if exists(.req) {
+        .http_request = .req
+        del(.req)
+      }
+
+      # 3. Standardize Timestamp for ES
+      if exists(.time) {
+        ."@timestamp" = .time
+      } else if exists(.timestamp) {
+        ."@timestamp" = .timestamp
+      }
+
+      # 4. Normalize 'msg' field if it came from JSON (like Pino/Winston)
+      if exists(.msg) && !exists(.message) {
+        .message = .msg
+      }
+
+      # 5. Dynamic Cleanup of Docker Labels
+      keys_to_check = keys(object!(.))
+      for_each(keys_to_check) -> |_i, k| {
+        k = string!(k)
+        if starts_with(k, "label") || starts_with(k, "container_label") {
+          ., _ = remove(., [k])
+        }
+      }
+
+      # 6. Cleanup internal fields to keep ES index clean
+      del(.log)
+      del(.stream)
+      del(.time)
 
 sinks:
   elasticsearch:
@@ -32,3 +70,5 @@ sinks:
     mode: bulk
     bulk:
       index: "docker-logs-%Y-%m-%d"
+    healthcheck:
+      enabled: true
