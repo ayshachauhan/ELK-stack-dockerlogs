@@ -1,5 +1,5 @@
 // server.js
-const logger = require('./logger');
+const logger = require('../src/logger');
 const express = require('express');
 const app = express();
 const pinoHttp = require('pino-http');
